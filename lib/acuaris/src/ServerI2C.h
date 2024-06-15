@@ -12,7 +12,7 @@ namespace acuaris
 {
     namespace com_i2c
     {
-        
+
         class ServerI2C;
 
         class ServerI2C : public DeviceI2C
@@ -36,106 +36,21 @@ namespace acuaris
             {
                 return 10;
             }
-
-            static void queryListen()
-            {
-                Serial.println("requestAction");
-                if (com_i2c::ServerI2C::instance)
-                {
-                    com_i2c::ServerI2C::instance->processQuery();
-                }
-            };
-            virtual void processQuery()
-            {
-                ResponseData response;
-                for (size_t i = 0; i < _serverQueries.size(); i++)
-                {
-                    Serial.print("searching Action ");
-                    Serial.println(_selectedAddress);
-                    Serial.print("Action Address ");
-                    Serial.println(_serverQueries[i]->getAddress());
-                    if (_serverQueries[i]->getAddress() == _selectedAddress)
-                    {
-                        response = _serverQueries[i]->makeQueryResponse();
-                        break;
-                    }
-                }
-                Serial.println("response Content: ");
-                Serial.println(response.size());
-                Serial.println(response.operator[](0));
-                Serial.println(response.operator[](1));
-                if(response.size() == 0){
-                    const int MAX = 10;
-                    byte array[MAX];
-                    ResponseData data(array);
-                    response = data;
-                }
-                Serial.println("response Content: ");
-                Serial.println(response.size());
-                Serial.println(response.operator[](0));
-                Serial.println(response.operator[](1));
-                for (size_t i = 0; i < 2; i++)
-                {
-                    if(i< response.size()){
-                        i2c->write(response.operator[](i));
-                    } else {
-                        i2c->write(byte(0x0));
-                    }
-                }
-            };
-            static void commandListen(int length)
-            {
-                Serial.println("recivedAction");
-                if (ServerI2C::instance)
-                {
-                    ServerI2C::instance->receivedCommand(length);
-                }
-            };
-            virtual void receivedCommand(int length)
-            {
-                Serial.println("processing Command");
-                Serial.println(AMOUNT_DATA_BYTES);
-                
-                    byte address = i2c->read();
-                    this->setAddress(address);
-                    Serial.print("set Address: ");
-                    Serial.println(address);
-                     Serial.print("Length: ");
-                    Serial.println(length);
-                    const int MAX = 10;
-                    byte array[MAX];
-                    CommandData data(array);
-                    int test = 0;
-                    while (i2c->available())
-                    {
-                        Serial.print("availibility ");
-                        Serial.println(test);
-                        byte dato = i2c->read();
-                        if (dato != -1)
-                        {
-                            Serial.print("Push Dato: ");
-                            Serial.println(dato);
-                            data.push_back(dato);
-                        }
-                    }
-                    this->processCommand(data);
-                
-            };
             void processCommand(CommandData data)
             {
-                Serial.print("process Action Function ");
+                /* Serial.print("process Action Function ");
                 Serial.println(data.size());
                 Serial.print("process Action Data Content ");
-                Serial.println(data.size());
+                Serial.println(data.size()); */
                 if (data.size() <= 0)
                     return;
 
                 for (size_t i = 0; i < _serverCommands.size(); i++)
                 {
-                    Serial.print("searching Action ");
+                    /* Serial.print("searching Action ");
                     Serial.println(_selectedAddress);
                     Serial.print("Action Address ");
-                    Serial.println(_serverCommands[i]->getAddress());
+                    Serial.println(_serverCommands[i]->getAddress()); */
                     if (_serverCommands[i]->getAddress() == _selectedAddress)
                     {
                         _serverCommands[i]->makeCommand(&data);
@@ -165,6 +80,63 @@ namespace acuaris
                 }
                 return instance;
             }
+            TwoWire *getI2C()
+            {
+                return i2c;
+            }
+            void processQuery()
+            {
+                ResponseData response;
+                for (size_t i = 0; i < _serverQueries.size(); i++)
+                {
+                    if (_serverQueries[i]->getAddress() == _selectedAddress)
+                    {
+                        response = _serverQueries[i]->makeQueryResponse();
+                        break;
+                    }
+                }
+                if (response.size() == 0)
+                {
+                    const int MAX = 10;
+                    byte array[MAX];
+                    ResponseData data(array);
+                    response = data;
+                }
+                u8 ok = 1;
+                for (size_t i = 0; i < 2; i++)
+                {
+                    if (i < response.size())
+                    {
+                        ok = i2c->write(response.operator[](i));
+                    }
+                    else
+                    {
+                        ok = i2c->write(byte(0x0));
+                    };
+                    if(!ok) {
+                        i2c->clearWriteError();
+                    }
+                }
+            };
+            void receivedCommand(int length)
+            {
+                byte address = i2c->read();
+                this->setAddress(address);
+                const int MAX = 10;
+                byte array[MAX];
+                CommandData data(array);
+                int test = i2c->available();
+                while (test)
+                {
+                    byte dato = i2c->read();
+                    if (dato != -1)
+                    {
+                        data.push_back(dato);
+                    }
+                    test = i2c->available();
+                }
+                this->processCommand(data);
+            };
             void addCommandHandler(CommandHandlerI2C &command)
             {
                 _serverCommands.push_back(&command);
@@ -175,10 +147,8 @@ namespace acuaris
             }
             void begin()
             {
-                
-                i2c->onRequest(queryListen);
                 i2c->begin(_deviceAddress);
-                i2c->onReceive(commandListen);
+                i2c->setTimeout(5000);
             };
             ~ServerI2C(){};
         };

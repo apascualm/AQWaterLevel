@@ -3,11 +3,10 @@
 
 #include <Arduino.h>
 #include <IntervalSwitch.h>
-//#include <NewPing.h> //TODO:Eliminar libreria;
 
 #include <EEPROM.h>
 
-#define MAINTENANCE_PIN 2
+#define MAINTENANCE_PIN 13
 #define BUZZER_PIN 4
 #define WORKING_LED_PIN 5
 #define ERROR_LED_PIN 6
@@ -19,7 +18,7 @@ const uint32_t MEMORY_VERSION = 1;
 
 const bool BUZZER_DEFAULT = true;
 const bool BUZZER_SOUND_DEFAULT = false;
-const int TIMEOUT_DEFAULT = 12;
+const int TIMEOUT_DEFAULT = 20;
 const int HISTERESIS_DEFAULT = 0;
 const int ADJUST_ZERO_DEFAULT = 0;
 const int ADJUST_FULL_DEFAULT = 600;
@@ -46,7 +45,6 @@ namespace acuaris
         };
 
         MemoryStorage store;
-        
 
         class AWL
         {
@@ -56,11 +54,15 @@ namespace acuaris
             int _pinLevel2;
             int _pinReservoirLevel1;
             int _pinPump;
+            int _pinManual;
             bool _maintenance;
             bool _run;
             bool _stLevel1;
             bool _stLevel2;
+            bool _stManual;
+            bool _isOverRun;
             bool _stReservoirLevel1;
+            int _levelRaw;
             MemoryStorage *_store;
             unsigned long _countWaterNeeded;
             unsigned long _startPump;
@@ -73,12 +75,14 @@ namespace acuaris
             utils::IntervalSwitch *_ErrorLedInterval;
             utils::IntervalSwitch *_buzzerInterval;
 
-            void loadMemory() {
+            void loadMemory()
+            {
                 EEPROM.get(0, *this->_store);
                 // Check if memory struture version is diferent, then load default parameters
-                if(_store->memoryVersion != MEMORY_VERSION) {
+                if (_store->memoryVersion != MEMORY_VERSION)
+                {
                     _store->memoryVersion = MEMORY_VERSION;
-                    _store->timeOutRele = 12;
+                    _store->timeOutRele = TIMEOUT_DEFAULT;
                     _store->levelFullSetter = 150;
                     _store->levelZeroSetter = 10;
                     _store->histeresis = 0;
@@ -86,7 +90,8 @@ namespace acuaris
                 }
             }
 
-            void storeMemory() {
+            void storeMemory()
+            {
                 EEPROM.put(0, *this->_store);
             }
 
@@ -99,7 +104,9 @@ namespace acuaris
             {
                 _stLevel1 = digitalRead(_pinLevel1);
                 _stLevel2 = digitalRead(_pinLevel2);
+                _stManual = digitalRead(_pinManual);
                 _stReservoirLevel1 = digitalRead(_pinReservoirLevel1);
+                _levelRaw = levelRaw();
             }
             bool checkRefillCondition()
             {
@@ -117,6 +124,10 @@ namespace acuaris
                 }
                 return check;
             }
+            bool checkManualRun()
+            {
+                return !_stManual;
+            }
             void checkErrors()
             {
                 checkWorkingLed();
@@ -127,15 +138,15 @@ namespace acuaris
             {
                 if (maintenance())
                 {
-                    _ledGreenOn = 100;
+                    _ledGreenOn = 50;
                 }
                 else if (isRunning())
                 {
-                    _ledGreenOn = 700;
+                    _ledGreenOn = 300;
                 }
                 else
                 {
-                    _ledGreenOn = 1500;
+                    _ledGreenOn = 5000;
                 }
             }
             void checkErrorLed()
@@ -178,8 +189,10 @@ namespace acuaris
             }
 
         public:
-            AWL(int pinLevel1, int pinLevel2, int pinReservoirLevel1, int pinPump)
+            AWL(int pinLevel1, int pinLevel2, int pinReservoirLevel1, int pinPump, int pinManual)
             {
+                _isOverRun = false;
+                _pinManual = pinManual;
                 _pinLevel1 = pinLevel1;
                 _pinLevel2 = pinLevel2;
                 _pinReservoirLevel1 = pinReservoirLevel1;
@@ -212,7 +225,9 @@ namespace acuaris
                 loadMemory();
                 pinMode(_pinLevel1, INPUT_PULLUP);
                 pinMode(_pinLevel2, INPUT_PULLUP);
+                pinMode(_pinManual, INPUT_PULLUP);
                 pinMode(_pinReservoirLevel1, INPUT_PULLUP);
+
                 pinMode(_pinPump, OUTPUT);
 
                 pinMode(WORKING_LED_PIN, OUTPUT);
@@ -238,7 +253,7 @@ namespace acuaris
 
             static void interrupMaintenance()
             {
-                
+
                 if (_instance != 0)
                 {
                     _instance->maintenance(!_instance->maintenance());
@@ -251,34 +266,42 @@ namespace acuaris
             }
             void runStop(int seg)
             {
-                
+
                 if (seg < 3 || seg > 240)
                     return;
                 _store->timeOutRele = seg;
                 storeMemory();
             }
 
-            int reservoirZeroSetter(bool set= false){
-                if(levelRaw() == -1) return -1;
-                if(set){
+            int reservoirZeroSetter(bool set = false)
+            {
+                if (levelRaw() == -1)
+                    return -1;
+                if (set)
+                {
                     _store->levelZeroSetter = levelRaw();
                     storeMemory();
                 }
                 return _store->levelZeroSetter;
             }
-            int reservoirFullSetter(bool set= false){
-                if(levelRaw() == -1) return -1;
-                if(set){
+            int reservoirFullSetter(bool set = false)
+            {
+                if (levelRaw() == -1)
+                    return -1;
+                if (set)
+                {
                     _store->levelFullSetter = levelRaw();
                     storeMemory();
                 }
                 return _store->levelFullSetter;
             }
 
-            int histeresisSetter(){
+            int histeresisSetter()
+            {
                 return _store->histeresis;
             };
-            void histeresisSetter(int ms){
+            void histeresisSetter(int ms)
+            {
                 _store->histeresis = ms;
                 storeMemory();
             };
@@ -305,7 +328,7 @@ namespace acuaris
 
             int levelPercent()
             {
-                int level = levelRaw();
+                int level = _levelRaw;
                 if (level <= 0)
                     return -1;
 
@@ -325,13 +348,20 @@ namespace acuaris
             void checkLevel()
             {
                 readSensors();
-                if (!_maintenance && checkRefillCondition() && (_countWaterNeeded + 2000) < millis()) // && abs(millis() - _countWaterNeeded) > 2000 ))
+                if (checkManualRun())
                 {
+                    runPump(true);
+                    _startPump = millis();
+                }
+                else if (!_maintenance && checkRefillCondition() && (_countWaterNeeded + 2000) < millis()) // && abs(millis() - _countWaterNeeded) > 2000 ))
+                {
+
                     if (_run && isOverRun()) //&& abs(millis() - _startPump) > _store->timeOutRele * 1000 )
                     {
+                        _isOverRun = true;
                         runPump(false);
                     }
-                    else if (_startPump == 0)
+                    else if (!_run && !isOverRun())
                     {
                         runPump(true);
                         _startPump = millis();
@@ -349,8 +379,8 @@ namespace acuaris
             }
             String getPrint()
             {
-                String result = "{\"lv1\":\"" + String(getStLevel1()) + "\",\"lv2\":\"" + String(_stLevel2) + "\",\"lvR1\":\"" + String(_stReservoirLevel1) + "\"";
-                result += ",\"run\":\"" + String(_run) + "\",\"TimeRun\":\"" + String(_startPump) + "\",\"TimeOut\":\"" + String(_store->timeOutRele*1000) + "\",\"mnt\":\"" + String(_maintenance) + "\",\"ms\":\"" + String(millis()) + "\", \"level_dis\":\"" + levelRaw() + "\", \"level_%\":\"" + levelPercent() + "\"}";
+                String result = "{\"lv1\":\"" + String(getStLevel1()) + "\",\"lv2\":\"" + String(_stLevel2) + "\",\"lvR1\":\"" + String(_stReservoirLevel1) + "\",\"man\":\"" + String(checkManualRun()) + "\"";
+                result += ",\"run\":\"" + String(_run) + "\",\"TimeRun\":\"" + String(_startPump) + "\",\"TimeOut\":\"" + String(_store->timeOutRele * 1000) + "\",\"mnt\":\"" + String(_maintenance) + "\",\"ms\":\"" + String(millis()) + "\", \"level_dis\":\"" + levelRaw() + "\", \"level_%\":\"" + levelPercent() + "\"}";
                 return result;
             }
             bool getStLevel1()
@@ -371,14 +401,31 @@ namespace acuaris
             }
             bool isOverRun()
             {
-                if (_startPump == 0)
+                if (_isOverRun)
+                {
+                    return true;
+                }
+                else if (_run)
+                {
+                    bool overRunCalculate = false;
+                    if (_startPump + (_store->timeOutRele * 1000) > 4294967295)
+                    {
+                        overRunCalculate = (_startPump + (_store->timeOutRele * 1000) - 4294967295) < millis() && millis() < _startPump; 
+                    }
+                    else
+                    {
+                        overRunCalculate = (_startPump + (_store->timeOutRele * 1000)) < millis();
+                    }
+                    return overRunCalculate;
+                }
+                else
                 {
                     return false;
                 }
-                return (_startPump + (_store->timeOutRele * 1000)) < millis();
             }
             void reset()
             {
+                _isOverRun = false;
                 _startPump = 0;
             }
             uint16_t status()
@@ -406,7 +453,7 @@ namespace acuaris
                     bitSet(result, 3);
                 }
 
-                if (isOverRun())
+                if (_isOverRun)
                 {
                     bitSet(result, 4);
                 }

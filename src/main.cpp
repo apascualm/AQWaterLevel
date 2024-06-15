@@ -6,6 +6,7 @@
 
 #define VERSION "1.0.0"
 
+#define MANUAL_PIN 2
 #define NIVEL1_PIN 9
 #define NIVEL2_PIN 10
 #define NIVEL_RESERVOIR_PIN 11
@@ -14,6 +15,14 @@
 #define BUZZER_ENABLED_PIN A0
 #define BUZZER_SOUND_PIN A1
 #define RELE_TIMEOUT_PIN A2
+
+// global test
+int passMemory7 = 0;
+int passMemory24 = 0;
+int failcheckCallback = 0;
+
+void I2C_Request();
+void I2C_Received(int lent);
 
 void levelToZeroCommandCallback(acuaris::CommandData *data);
 void levelToFullCommandCallback(acuaris::CommandData *data);
@@ -36,7 +45,7 @@ acuaris::ResponseData maintenanceQueryCallback();
 
 void printStatus(bool *on);
 
-acuaris::awl::AWL awl = acuaris::awl::AWL(NIVEL1_PIN, NIVEL2_PIN, NIVEL_RESERVOIR_PIN, RELE_PIN);
+acuaris::awl::AWL awl = acuaris::awl::AWL(NIVEL1_PIN, NIVEL2_PIN, NIVEL_RESERVOIR_PIN, RELE_PIN, MANUAL_PIN);
 
 acuaris::AWLServer awlServer;
 acuaris::GenericAWLCommandHandler levelToZeroCommand(20, levelToZeroCommandCallback);
@@ -91,11 +100,13 @@ void setup()
   awlServer.addQueryHandler(maintenanceQuery);
 
   awlServer.begin();
+  awlServer.getI2C()->onRequest(I2C_Request);
+  awlServer.getI2C()->onReceive(I2C_Received);
 }
 
 void loop()
 {
-  printStatusInterval.loop();
+  //printStatusInterval.loop();
   awl.checkLevel();
 }
 
@@ -174,7 +185,6 @@ acuaris::ResponseData PercentLevelQueryCallback()
 }
 acuaris::ResponseData DistanceLevelQueryCallback()
 {
-  Serial.println("Distance: ");
   acuaris::ResponseData data = awlServer.emptyResponseData();
   uint16_t value = awl.levelRaw();
   data.push_back(lowByte(value));
@@ -183,20 +193,15 @@ acuaris::ResponseData DistanceLevelQueryCallback()
 }
 acuaris::ResponseData statusMainQueryCallback()
 {
-  Serial.print("Status :");
+  passMemory7++;
   acuaris::ResponseData data = awlServer.emptyResponseData();
   uint16_t value = awl.status();
-  Serial.println(value);
-  Serial.print(lowByte(value));
-  Serial.print("");
-  Serial.println(highByte(value));
   data.push_back(lowByte(value));
   data.push_back(highByte(value));
   return data;
 }
 acuaris::ResponseData settingZeroLevelQueryCallback()
 {
-  Serial.println("Zero Setting: ");
   acuaris::ResponseData data = awlServer.emptyResponseData();
   uint16_t value = awl.reservoirZeroSetter();
   data.push_back(lowByte(value));
@@ -229,6 +234,7 @@ acuaris::ResponseData histeresisQueryCallback()
 }
 acuaris::ResponseData maintenanceQueryCallback()
 {
+  passMemory24++;
   acuaris::ResponseData data = awlServer.emptyResponseData();
   data.push_back(awl.maintenance());
   return data;
@@ -236,6 +242,21 @@ acuaris::ResponseData maintenanceQueryCallback()
 
 void printStatus(bool *on) {
   if(*on) {
+
     Serial.println(awl.getPrint());
+    Serial.print("Pass Memory 7: ");
+    Serial.println(passMemory7);
+    Serial.print("Pass Memory 24: ");
+    Serial.println(passMemory24);
+    Serial.print("Fail Check Callback: ");
+    Serial.println(acuaris::com_i2c::failcheckCallback);
   }
+}
+
+void I2C_Request(){
+  awlServer.processQuery();
+}
+
+void I2C_Received(int lent) {
+  awlServer.receivedCommand(lent);
 }

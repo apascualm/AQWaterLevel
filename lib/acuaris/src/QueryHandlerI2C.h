@@ -11,11 +11,13 @@ namespace acuaris
         class QueryHandlerI2C;
         typedef Vector<QueryHandlerI2C *> Queries;
         typedef Vector<byte> ResponseData;
+        int failcheckCallback = 0;
 
         class QueryHandlerI2C
         {
         protected:
             byte _address;
+            ResponseData (*user_callback)();
         public:
             QueryHandlerI2C(byte address)
             {
@@ -24,9 +26,10 @@ namespace acuaris
             QueryHandlerI2C(byte address, ResponseData (*callback)())
             {
                 _address = address;
+                user_callback = callback;
             }
             ~QueryHandlerI2C(){};
-            static ResponseData (*user_callback)();
+            
             byte getAddress()
             {
                 return _address;
@@ -37,18 +40,17 @@ namespace acuaris
             }
             ResponseData makeQueryResponse()
             {
-                Serial.println("response data");
-                if (user_callback == nullptr)
+                if (!user_callback)
                 {
-                    Serial.println("response empty data");
+                    failcheckCallback++;
                     ResponseData data;
                     return data;
                 }
-                return this->user_callback();
+                return user_callback();
             };
         };
 
-        ResponseData (*QueryHandlerI2C::user_callback)();
+        ///ResponseData (*QueryHandlerI2C::user_callback)();
     }
 }
 
